@@ -113,6 +113,54 @@ extension CrawlBarSelfTest {
         try Self.expect(failedStdoutResult.shouldShowExitCode, "failed runs show exit code")
     }
 
+    static func testActionLogStorePrunesOldLogs() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crawlbar-log-cap-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = CrawlActionLogStore(directoryURL: directory)
+        let cap = CrawlActionLogStore.maxRetainedLogCount
+        let total = cap + 3
+        for index in 0..<total {
+            let url = directory.appendingPathComponent(String(format: "old-%04d.json", index))
+            try Data("{}".utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSince1970: TimeInterval(1_700_000_000 + index))],
+                ofItemAtPath: url.path)
+        }
+        try Data("keep".utf8).write(to: directory.appendingPathComponent("readme.txt"))
+
+        let listed = store.recent(limit: 5)
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        let jsonNames = names.filter { $0.hasSuffix(".json") }
+        try Self.expect(jsonNames.count == cap, "listing action logs drops files past the retention cap")
+        try Self.expect(names.contains("readme.txt"), "log retention leaves non-json files alone")
+        try Self.expect(!jsonNames.contains("old-0000.json"), "listing action logs removes the oldest file")
+        try Self.expect(
+            jsonNames.contains(String(format: "old-%04d.json", total - 1)),
+            "listing action logs keeps the newest file")
+        try Self.expect(listed.count == 5, "recent action logs still honor the requested limit")
+        try Self.expect(
+            listed.first?.lastPathComponent == String(format: "old-%04d.json", total - 1),
+            "recent action logs stay ordered newest first")
+
+        let saved = try store.save(CrawlCommandResult(
+            appID: BuiltInCrawlApps.graincrawlID,
+            action: "refresh",
+            exitCode: 0,
+            stdout: "capped",
+            stderr: "",
+            startedAt: Date(timeIntervalSince1970: 1_775_000_000),
+            finishedAt: Date(timeIntervalSince1970: 1_775_000_001)))
+        let afterSave = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        let jsonAfterSave = afterSave.filter { $0.hasSuffix(".json") }
+        try Self.expect(jsonAfterSave.count == cap, "saving an action log keeps the directory at the cap")
+        try Self.expect(jsonAfterSave.contains(saved.lastPathComponent), "saving an action log keeps the new file")
+        try Self.expect(!jsonAfterSave.contains("old-0003.json"), "saving an action log removes the next oldest file")
+        try Self.expect(afterSave.contains("readme.txt"), "saving an action log leaves non-json files alone")
+    }
+
     static func testCommandTimeoutEscalates() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("crawlbar-timeout-\(UUID().uuidString)", isDirectory: true)

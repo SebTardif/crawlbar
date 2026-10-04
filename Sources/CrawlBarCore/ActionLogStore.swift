@@ -4,6 +4,10 @@ public struct CrawlActionLogStore: @unchecked Sendable {
     public let directoryURL: URL
     private let fileManager: FileManager
 
+    // Settings stats every log on each snapshot. Cap the directory so scheduled
+    // refresh cannot grow ~/.crawlbar/logs without bound.
+    public static let maxRetainedLogCount = 200
+
     public init(
         directoryURL: URL = Self.defaultDirectory(),
         fileManager: FileManager = .default)
@@ -27,23 +31,12 @@ public struct CrawlActionLogStore: @unchecked Sendable {
             [.posixPermissions: NSNumber(value: Int16(0o600))],
             ofItemAtPath: url.path)
         #endif
+        _ = self.retainedLogsNewestFirst()
         return url
     }
 
     public func recent(limit: Int = 20) -> [URL] {
-        guard let urls = try? self.fileManager.contentsOfDirectory(
-            at: self.directoryURL,
-            includingPropertiesForKeys: [.contentModificationDateKey])
-        else {
-            return []
-        }
-        return urls
-            .lazy
-            .filter { $0.pathExtension == "json" }
-            .map { ($0, self.modificationDate($0)) }
-            .sorted { $0.1 > $1.1 }
-            .prefix(limit)
-            .map(\.0)
+        Array(self.retainedLogsNewestFirst().prefix(limit))
     }
 
     public func recentResults(limit: Int = 20) -> [CrawlCommandResult] {
@@ -57,6 +50,25 @@ public struct CrawlActionLogStore: @unchecked Sendable {
         home
             .appendingPathComponent(".crawlbar", isDirectory: true)
             .appendingPathComponent("logs", isDirectory: true)
+    }
+
+    private func retainedLogsNewestFirst() -> [URL] {
+        guard let urls = try? self.fileManager.contentsOfDirectory(
+            at: self.directoryURL,
+            includingPropertiesForKeys: [.contentModificationDateKey])
+        else {
+            return []
+        }
+        let sorted = urls
+            .filter { $0.pathExtension == "json" }
+            .map { ($0, self.modificationDate($0)) }
+            .sorted { $0.1 > $1.1 }
+        if sorted.count > Self.maxRetainedLogCount {
+            for entry in sorted.dropFirst(Self.maxRetainedLogCount) {
+                try? self.fileManager.removeItem(at: entry.0)
+            }
+        }
+        return sorted.prefix(Self.maxRetainedLogCount).map(\.0)
     }
 
     private func modificationDate(_ url: URL) -> Date {
