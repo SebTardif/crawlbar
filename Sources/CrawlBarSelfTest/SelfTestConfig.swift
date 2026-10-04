@@ -284,6 +284,73 @@ extension CrawlBarSelfTest {
         try Self.expect(!explicitlyClearedContent.contains("api_key ="), "native TOML secret keys clear when explicit")
     }
 
+    static func testNativeTomlLiteralsAndInlineComments() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crawlbar-native-toml-literal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let configURL = directory.appendingPathComponent("config.toml")
+        try Data(#"""
+        [granola]
+        profile_path = '/tmp/granola-profile'
+        preferred_source = 'private-api'
+        allow_desktop_cache = true # keep enabled
+
+        [note]
+        quoted = "say \"hi\"" # trailing
+        hashed = 'keep # this'
+
+        [sync]
+        default_limit = 25
+        """#.utf8).write(to: configURL)
+
+        let manifest = CrawlAppManifest(
+            id: CrawlAppID(rawValue: "literalcrawl"),
+            displayName: "Literal Crawl",
+            description: "A go-toml literal test crawler",
+            binary: .init(name: "literalcrawl"),
+            branding: .init(symbolName: "terminal", accentColor: "#123456"),
+            paths: .init(defaultConfig: configURL.path),
+            commands: [:],
+            capabilities: [],
+            configOptions: [
+                .init(id: "profile_path", label: "Profile", kind: .string, configKey: "granola.profile_path"),
+                .init(id: "preferred_source", label: "Source", kind: .choice, configKey: "granola.preferred_source"),
+                .init(id: "allow_desktop_cache", label: "Desktop cache", kind: .boolean, configKey: "granola.allow_desktop_cache"),
+                .init(id: "quoted", label: "Quoted", kind: .string, configKey: "note.quoted"),
+                .init(id: "hashed", label: "Hashed", kind: .string, configKey: "note.hashed"),
+                .init(id: "sync_limit", label: "Sync limit", kind: .number, configKey: "sync.default_limit"),
+            ])
+        var appConfig = CrawlBarAppConfig(id: manifest.id)
+        let nativeStore = CrawlNativeConfigStore()
+        let loaded = nativeStore.resolvedConfigValues(appConfig: appConfig, manifest: manifest)
+        try Self.expect(loaded["profile_path"] == "/tmp/granola-profile", "literal TOML strings drop single quotes")
+        try Self.expect(loaded["preferred_source"] == "private-api", "literal TOML choices drop single quotes")
+        try Self.expect(loaded["allow_desktop_cache"] == "true", "inline TOML comments stay off boolean values")
+        try Self.expect(loaded["quoted"] == "say \"hi\"", "basic TOML strings unescape and drop inline comments")
+        try Self.expect(loaded["hashed"] == "keep # this", "hashes inside literal TOML strings stay in the value")
+        try Self.expect(loaded["sync_limit"] == "25", "inline comments stay off numeric TOML values")
+
+        appConfig.configValues = loaded
+        appConfig.configValues["sync_limit"] = "30"
+        try nativeStore.write(appConfig: appConfig, manifest: manifest)
+        let content = try String(contentsOf: configURL, encoding: .utf8)
+        try Self.expect(!content.contains("'private-api'"), "rewritten TOML does not wrap literal quotes")
+        try Self.expect(!content.contains("allow_desktop_cache = false"), "rewritten TOML does not flip a commented true")
+        try Self.expect(content.contains("allow_desktop_cache = true"), "rewritten TOML keeps a commented boolean")
+        try Self.expect(content.contains("default_limit = 30"), "rewritten TOML keeps the edited number")
+
+        let reread = nativeStore.resolvedConfigValues(
+            appConfig: CrawlBarAppConfig(id: manifest.id),
+            manifest: manifest)
+        try Self.expect(reread["preferred_source"] == "private-api", "rewritten literal TOML reads back without quotes")
+        try Self.expect(reread["allow_desktop_cache"] == "true", "rewritten commented boolean reads back as true")
+        try Self.expect(reread["quoted"] == "say \"hi\"", "rewritten basic TOML string reads back unescaped")
+        try Self.expect(reread["hashed"] == "keep # this", "rewritten literal hash reads back intact")
+        try Self.expect(reread["sync_limit"] == "30", "rewritten numeric TOML reads back")
+    }
+
     static func testStatusSecretsLoadFromNativeConfig() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("crawlbar-status-secret-\(UUID().uuidString)", isDirectory: true)

@@ -303,13 +303,46 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
     }
 
     private static func decodeTomlScalar(_ value: String) -> String {
-        if value == "true" || value == "false" { return value }
-        guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else {
-            return value
+        let stripped = Self.stripInlineTomlComment(value)
+        if stripped.hasPrefix("'"), !stripped.hasPrefix("'''"), stripped.hasSuffix("'"), stripped.count >= 2 {
+            return String(stripped.dropFirst().dropLast())
         }
-        return String(value.dropFirst().dropLast())
-            .replacingOccurrences(of: "\\\"", with: "\"")
-            .replacingOccurrences(of: "\\\\", with: "\\")
+        if stripped.hasPrefix("\""), !stripped.hasPrefix("\"\"\""), stripped.hasSuffix("\""), stripped.count >= 2 {
+            return Self.decodeBasicKey(stripped)
+        }
+        return stripped
+    }
+
+    // go-toml writes `key = 'literal' # comment`. A later save must see the
+    // literal text, not the quotes or the comment.
+    private static func stripInlineTomlComment(_ value: String) -> String {
+        let characters = Array(value)
+        var quote: Character?
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            if let delimiter = quote {
+                if delimiter == "\"", character == "\\" {
+                    index += 2
+                    continue
+                }
+                if character == delimiter {
+                    quote = nil
+                }
+                index += 1
+                continue
+            }
+            if character == "#" {
+                return String(characters[..<index]).trimmingCharacters(in: .whitespaces)
+            }
+            if character == "\"" || character == "'" {
+                quote = character
+                index += 1
+                continue
+            }
+            index += 1
+        }
+        return value.trimmingCharacters(in: .whitespaces)
     }
 }
 

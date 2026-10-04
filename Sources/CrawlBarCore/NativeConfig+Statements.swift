@@ -96,7 +96,7 @@ extension CrawlNativeConfigStore {
         }
     }
 
-    private static func decodeBasicKey(_ value: String) -> String {
+    static func decodeBasicKey(_ value: String) -> String {
         guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else { return value }
         let characters = Array(value.dropFirst().dropLast())
         let escapes: [Character: String] = [
