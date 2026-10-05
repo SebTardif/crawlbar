@@ -299,7 +299,7 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
         if kind == .number {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? "0"
         }
-        return "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+        return "\"\(Self.encodeTomlBasicString(value))\""
     }
 
     private static func decodeTomlScalar(_ value: String) -> String {

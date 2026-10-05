@@ -300,6 +300,7 @@ extension CrawlBarSelfTest {
         [note]
         quoted = "say \"hi\"" # trailing
         hashed = 'keep # this'
+        label = "a\nb"
 
         [sync]
         default_limit = 25
@@ -320,6 +321,7 @@ extension CrawlBarSelfTest {
                 .init(id: "allow_desktop_cache", label: "Desktop cache", kind: .boolean, configKey: "granola.allow_desktop_cache"),
                 .init(id: "quoted", label: "Quoted", kind: .string, configKey: "note.quoted"),
                 .init(id: "hashed", label: "Hashed", kind: .string, configKey: "note.hashed"),
+                .init(id: "label", label: "Label", kind: .string, configKey: "note.label"),
                 .init(id: "sync_limit", label: "Sync limit", kind: .number, configKey: "sync.default_limit"),
             ])
         var appConfig = CrawlBarAppConfig(id: manifest.id)
@@ -330,6 +332,7 @@ extension CrawlBarSelfTest {
         try Self.expect(loaded["allow_desktop_cache"] == "true", "inline TOML comments stay off boolean values")
         try Self.expect(loaded["quoted"] == "say \"hi\"", "basic TOML strings unescape and drop inline comments")
         try Self.expect(loaded["hashed"] == "keep # this", "hashes inside literal TOML strings stay in the value")
+        try Self.expect(loaded["label"] == "a\nb", "escaped TOML newlines decode to a newline")
         try Self.expect(loaded["sync_limit"] == "25", "inline comments stay off numeric TOML values")
 
         appConfig.configValues = loaded
@@ -340,6 +343,8 @@ extension CrawlBarSelfTest {
         try Self.expect(!content.contains("allow_desktop_cache = false"), "rewritten TOML does not flip a commented true")
         try Self.expect(content.contains("allow_desktop_cache = true"), "rewritten TOML keeps a commented boolean")
         try Self.expect(content.contains("default_limit = 30"), "rewritten TOML keeps the edited number")
+        try Self.expect(content.contains("label = \"a\\nb\""), "rewritten TOML keeps an escaped newline on one line")
+        try Self.expect(!content.contains("label = \"a\nb\""), "rewritten TOML does not place a raw newline inside the label quotes")
 
         let reread = nativeStore.resolvedConfigValues(
             appConfig: CrawlBarAppConfig(id: manifest.id),
@@ -348,6 +353,7 @@ extension CrawlBarSelfTest {
         try Self.expect(reread["allow_desktop_cache"] == "true", "rewritten commented boolean reads back as true")
         try Self.expect(reread["quoted"] == "say \"hi\"", "rewritten basic TOML string reads back unescaped")
         try Self.expect(reread["hashed"] == "keep # this", "rewritten literal hash reads back intact")
+        try Self.expect(reread["label"] == "a\nb", "rewritten escaped newline reads back as a newline")
         try Self.expect(reread["sync_limit"] == "30", "rewritten numeric TOML reads back")
     }
 

@@ -96,6 +96,36 @@ extension CrawlNativeConfigStore {
         }
     }
 
+    static func encodeTomlBasicString(_ value: String) -> String {
+        var encoded = ""
+        for scalar in value.unicodeScalars {
+            switch scalar {
+            case "\\":
+                encoded += "\\\\"
+            case "\"":
+                encoded += "\\\""
+            case "\u{8}":
+                encoded += "\\b"
+            case "\t":
+                encoded += "\\t"
+            case "\n":
+                encoded += "\\n"
+            case "\u{c}":
+                encoded += "\\f"
+            case "\r":
+                encoded += "\\r"
+            default:
+                if scalar.value < 0x20 {
+                    let hex = String(scalar.value, radix: 16)
+                    encoded += "\\u" + String(repeating: "0", count: 4 - hex.count) + hex
+                } else {
+                    encoded.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return encoded
+    }
+
     static func decodeBasicKey(_ value: String) -> String {
         guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else { return value }
         let characters = Array(value.dropFirst().dropLast())
