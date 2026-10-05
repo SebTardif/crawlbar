@@ -96,6 +96,14 @@ extension CrawlNativeConfigStore {
         }
     }
 
+    static func persistedConfigValue(_ raw: String?, kind: CrawlAppManifest.ConfigOptionKind) -> String? {
+        guard let raw else { return nil }
+        if kind == .string {
+            return raw.isEmpty ? nil : raw
+        }
+        return raw.nilIfBlank
+    }
+
     static func encodeTomlBasicString(_ value: String) -> String {
         var encoded = ""
         for scalar in value.unicodeScalars {
@@ -115,7 +123,7 @@ extension CrawlNativeConfigStore {
             case "\r":
                 encoded += "\\r"
             default:
-                if scalar.value < 0x20 {
+                if scalar.value < 0x20 || scalar.value == 0x7F {
                     let hex = String(scalar.value, radix: 16)
                     encoded += "\\u" + String(repeating: "0", count: 4 - hex.count) + hex
                 } else {

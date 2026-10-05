@@ -357,6 +357,70 @@ extension CrawlBarSelfTest {
         try Self.expect(reread["sync_limit"] == "30", "rewritten numeric TOML reads back")
     }
 
+    static func testNativeTomlWhitespaceAndDeleteRoundTrip() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crawlbar-native-toml-whitespace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configURL = directory.appendingPathComponent("config.toml")
+        try Data(#"""
+        [note]
+        blank = "\n"
+        padded = "\nkeep\n"
+        deleted = "\u007F"
+        other = "keep"
+        """#.utf8).write(to: configURL)
+
+        let manifest = CrawlAppManifest(
+            id: CrawlAppID(rawValue: "whitespacecrawl"),
+            displayName: "Whitespace Crawl",
+            description: "A whitespace round-trip crawler",
+            binary: .init(name: "whitespacecrawl"),
+            branding: .init(symbolName: "terminal", accentColor: "#123456"),
+            paths: .init(defaultConfig: configURL.path),
+            commands: [:],
+            capabilities: [],
+            configOptions: [
+                .init(id: "blank", label: "Blank", kind: .string, configKey: "note.blank"),
+                .init(id: "padded", label: "Padded", kind: .string, configKey: "note.padded"),
+                .init(id: "deleted", label: "Deleted", kind: .string, configKey: "note.deleted"),
+                .init(id: "other", label: "Other", kind: .string, configKey: "note.other"),
+            ])
+        let nativeStore = CrawlNativeConfigStore()
+        var appConfig = CrawlBarAppConfig(id: manifest.id)
+        let loaded = nativeStore.resolvedConfigValues(appConfig: appConfig, manifest: manifest)
+        try Self.expect(loaded["blank"] == "\n", "a newline-only TOML string stays a newline")
+        try Self.expect(loaded["padded"] == "\nkeep\n", "surrounding newlines stay in the decoded string")
+        try Self.expect(loaded["deleted"] == "\u{7F}", "a TOML unicode delete decodes to U+007F")
+        appConfig.configValues = loaded
+        appConfig.configValues["other"] = "changed"
+        try nativeStore.write(appConfig: appConfig, manifest: manifest)
+        let content = try String(contentsOf: configURL, encoding: .utf8)
+        try Self.expect(content.contains("blank = \"\\n\""), "a newline-only value stays in the saved file")
+        try Self.expect(content.contains("padded = \"\\nkeep\\n\""), "surrounding newlines stay escaped")
+        try Self.expect(content.contains("deleted = \"\\u007f\""), "U+007F is written as a unicode escape")
+        try Self.expect(content.contains("other = \"changed\""), "the unrelated edit is saved")
+        let reread = nativeStore.resolvedConfigValues(appConfig: CrawlBarAppConfig(id: manifest.id), manifest: manifest)
+        try Self.expect(reread["blank"] == "\n", "the saved newline-only value reads back")
+        try Self.expect(reread["padded"] == "\nkeep\n", "the saved padded value reads back")
+        try Self.expect(reread["deleted"] == "\u{7F}", "the saved delete character reads back")
+
+        try FileManager.default.removeItem(at: configURL)
+        var fresh = CrawlBarAppConfig(id: manifest.id)
+        fresh.configValues = [
+            "blank": "\n",
+            "padded": "\nkeep\n",
+            "deleted": "\u{7F}",
+            "other": "fresh",
+        ]
+        try nativeStore.write(appConfig: fresh, manifest: manifest)
+        let created = try String(contentsOf: configURL, encoding: .utf8)
+        try Self.expect(created.contains("blank = \"\\n\""), "a fresh file keeps a newline-only string")
+        try Self.expect(created.contains("padded = \"\\nkeep\\n\""), "a fresh file keeps surrounding newlines")
+        try Self.expect(created.contains("deleted = \"\\u007f\""), "a fresh file escapes U+007F")
+        try Self.expect(created.contains("other = \"fresh\""), "a fresh file writes the other key")
+    }
+
     static func testStatusSecretsLoadFromNativeConfig() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("crawlbar-status-secret-\(UUID().uuidString)", isDirectory: true)

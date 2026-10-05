@@ -135,7 +135,7 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
         let url = URL(fileURLWithPath: PathExpander.expandHome(path))
         let hasWritableValues = manifest.configOptions.contains { option in
             guard option.configKey?.nilIfBlank != nil else { return false }
-            return values[option.id]?.nilIfBlank != nil
+            return Self.persistedConfigValue(values[option.id], kind: option.kind) != nil
         }
         guard self.fileManager.fileExists(atPath: url.path) || hasWritableValues else { return }
         let directory = url.deletingLastPathComponent()
@@ -155,7 +155,7 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
             guard let configKey = option.configKey?.nilIfBlank else { continue }
             // Saved overrides are still valid, but scalar writes cannot select an array element.
             guard !Self.isArrayValue(configKey, arrayPaths: arrayPaths) else { continue }
-            guard let value = values[option.id]?.nilIfBlank else {
+            guard let value = Self.persistedConfigValue(values[option.id], kind: option.kind) else {
                 if option.kind == .secret, !clearMissingSecretIDs.contains(option.id) {
                     continue
                 }
