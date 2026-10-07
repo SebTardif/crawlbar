@@ -21,6 +21,8 @@ enum CrawlBarSelfTest {
         try Self.testConfigStoreRoundTrips()
         try Self.testExternalManifestCatalog()
         try Self.testNativeConfigRoundTrips()
+        try Self.testNativeTomlLiteralsAndInlineComments()
+        try Self.testNativeTomlWhitespaceAndDeleteRoundTrip()
         try Self.testStatusSecretsLoadFromNativeConfig()
         try Self.testStatusMapperNormalizesCounts()
         try Self.testStatusMapperGoogleAccountStates()

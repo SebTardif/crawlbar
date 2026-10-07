@@ -135,7 +135,7 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
         let url = URL(fileURLWithPath: PathExpander.expandHome(path))
         let hasWritableValues = manifest.configOptions.contains { option in
             guard option.configKey?.nilIfBlank != nil else { return false }
-            return values[option.id]?.nilIfBlank != nil
+            return Self.persistedConfigValue(values[option.id], kind: option.kind) != nil
         }
         guard self.fileManager.fileExists(atPath: url.path) || hasWritableValues else { return }
         let directory = url.deletingLastPathComponent()
@@ -155,7 +155,7 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
             guard let configKey = option.configKey?.nilIfBlank else { continue }
             // Saved overrides are still valid, but scalar writes cannot select an array element.
             guard !Self.isArrayValue(configKey, arrayPaths: arrayPaths) else { continue }
-            guard let value = values[option.id]?.nilIfBlank else {
+            guard let value = Self.persistedConfigValue(values[option.id], kind: option.kind) else {
                 if option.kind == .secret, !clearMissingSecretIDs.contains(option.id) {
                     continue
                 }
@@ -299,17 +299,51 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
         if kind == .number {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? "0"
         }
-        return "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+        return "\"\(Self.encodeTomlBasicString(value))\""
     }
 
     private static func decodeTomlScalar(_ value: String) -> String {
-        if value == "true" || value == "false" { return value }
-        guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else {
-            return value
+        let stripped = Self.stripInlineTomlComment(value)
+        let scalars = stripped.unicodeScalars
+        if scalars.first == "'", !scalars.starts(with: "'''".unicodeScalars), scalars.last == "'", scalars.count >= 2 {
+            return String(scalars.dropFirst().dropLast())
         }
-        return String(value.dropFirst().dropLast())
-            .replacingOccurrences(of: "\\\"", with: "\"")
-            .replacingOccurrences(of: "\\\\", with: "\\")
+        if !scalars.starts(with: "\"\"\"".unicodeScalars) {
+            return Self.decodeTomlBasicString(stripped)
+        }
+        return stripped
+    }
+
+    // go-toml writes `key = 'literal' # comment`. A later save must see the
+    // literal text, not the quotes or the comment.
+    private static func stripInlineTomlComment(_ value: String) -> String {
+        let characters = Array(value.unicodeScalars)
+        var quote: Unicode.Scalar?
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            if let delimiter = quote {
+                if delimiter == "\"", character == "\\" {
+                    index += 2
+                    continue
+                }
+                if character == delimiter {
+                    quote = nil
+                }
+                index += 1
+                continue
+            }
+            if character == "#" {
+                return String(String.UnicodeScalarView(characters[..<index])).trimmingCharacters(in: .whitespaces)
+            }
+            if character == "\"" || character == "'" {
+                quote = character
+                index += 1
+                continue
+            }
+            index += 1
+        }
+        return value.trimmingCharacters(in: .whitespaces)
     }
 }
 
