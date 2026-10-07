@@ -5,15 +5,15 @@ extension CrawlNativeConfigStore {
     // may contain identical text and must remain opaque to configuration edits.
     static func statementIndices(in lines: [String]) -> [Int] {
         var statements: [Int] = []
-        var multilineQuote: Character?
+        var multilineQuote: Unicode.Scalar?
         var nesting = 0
         for (lineIndex, line) in lines.enumerated() {
             if multilineQuote == nil, nesting == 0 {
                 statements.append(lineIndex)
             }
-            let characters = Array(line)
+            let characters = Array(line.unicodeScalars)
             var index = 0
-            var quote: Character?
+            var quote: Unicode.Scalar?
             while index < characters.count {
                 let character = characters[index]
                 let isTriple = index + 2 < characters.count
@@ -92,7 +92,7 @@ extension CrawlNativeConfigStore {
             if value.hasPrefix("'"), value.hasSuffix("'"), value.count >= 2 {
                 return String(value.dropFirst().dropLast())
             }
-            return Self.decodeBasicKey(value)
+            return Self.decodeTomlBasicString(value)
         }
     }
 
@@ -134,17 +134,19 @@ extension CrawlNativeConfigStore {
         return encoded
     }
 
-    static func decodeBasicKey(_ value: String) -> String {
-        guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else { return value }
-        let characters = Array(value.dropFirst().dropLast())
-        let escapes: [Character: String] = [
+    static func decodeTomlBasicString(_ value: String) -> String {
+        let scalars = value.unicodeScalars
+        guard scalars.first == "\"", scalars.last == "\"", scalars.count >= 2 else { return value }
+        // Escape tokens are scalars: a combining mark may share a Character with a hex digit.
+        let characters = Array(scalars.dropFirst().dropLast())
+        let escapes: [Unicode.Scalar: String] = [
             "b": "\u{8}", "t": "\t", "n": "\n", "f": "\u{c}", "r": "\r", "\"": "\"", "\\": "\\",
         ]
         var decoded = ""
         var index = 0
         while index < characters.count {
             guard characters[index] == "\\" else {
-                decoded.append(characters[index])
+                decoded.unicodeScalars.append(characters[index])
                 index += 1
                 continue
             }
@@ -157,7 +159,7 @@ extension CrawlNativeConfigStore {
             } else if escape == "u" || escape == "U" {
                 let length = escape == "u" ? 4 : 8
                 guard index + length <= characters.count,
-                      let code = UInt32(String(characters[index..<(index + length)]), radix: 16),
+                      let code = UInt32(String(String.UnicodeScalarView(characters[index..<(index + length)])), radix: 16),
                       let scalar = UnicodeScalar(code)
                 else { return value }
                 decoded.unicodeScalars.append(scalar)

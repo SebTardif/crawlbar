@@ -304,11 +304,12 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
 
     private static func decodeTomlScalar(_ value: String) -> String {
         let stripped = Self.stripInlineTomlComment(value)
-        if stripped.hasPrefix("'"), !stripped.hasPrefix("'''"), stripped.hasSuffix("'"), stripped.count >= 2 {
-            return String(stripped.dropFirst().dropLast())
+        let scalars = stripped.unicodeScalars
+        if scalars.first == "'", !scalars.starts(with: "'''".unicodeScalars), scalars.last == "'", scalars.count >= 2 {
+            return String(scalars.dropFirst().dropLast())
         }
-        if stripped.hasPrefix("\""), !stripped.hasPrefix("\"\"\""), stripped.hasSuffix("\""), stripped.count >= 2 {
-            return Self.decodeBasicKey(stripped)
+        if !scalars.starts(with: "\"\"\"".unicodeScalars) {
+            return Self.decodeTomlBasicString(stripped)
         }
         return stripped
     }
@@ -316,8 +317,8 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
     // go-toml writes `key = 'literal' # comment`. A later save must see the
     // literal text, not the quotes or the comment.
     private static func stripInlineTomlComment(_ value: String) -> String {
-        let characters = Array(value)
-        var quote: Character?
+        let characters = Array(value.unicodeScalars)
+        var quote: Unicode.Scalar?
         var index = 0
         while index < characters.count {
             let character = characters[index]
@@ -333,7 +334,7 @@ public struct CrawlNativeConfigStore: @unchecked Sendable {
                 continue
             }
             if character == "#" {
-                return String(characters[..<index]).trimmingCharacters(in: .whitespaces)
+                return String(String.UnicodeScalarView(characters[..<index])).trimmingCharacters(in: .whitespaces)
             }
             if character == "\"" || character == "'" {
                 quote = character

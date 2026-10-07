@@ -91,6 +91,11 @@ CrawlBar overrides remain readable and editable independently; editing another
 option preserves those overrides. Manage array contents in the crawler's native
 configuration.
 
+Single-line TOML basic and literal strings are decoded before editing, and
+inline comments are excluded from scalar values. String settings preserve
+whitespace and escape control characters when saved; an empty string clears
+the setting.
+
 Secrets must never be emitted by `metadata --json`, and config reads should
 redact them unless an explicit reveal flag is provided. Longer term, crawler
 CLIs should expose safe config read/write/clear commands so CrawlBar can stop
