@@ -5,15 +5,15 @@ extension CrawlNativeConfigStore {
     // may contain identical text and must remain opaque to configuration edits.
     static func statementIndices(in lines: [String]) -> [Int] {
         var statements: [Int] = []
-        var multilineQuote: Character?
+        var multilineQuote: Unicode.Scalar?
         var nesting = 0
         for (lineIndex, line) in lines.enumerated() {
             if multilineQuote == nil, nesting == 0 {
                 statements.append(lineIndex)
             }
-            let characters = Array(line)
+            let characters = Array(line.unicodeScalars)
             var index = 0
-            var quote: Character?
+            var quote: Unicode.Scalar?
             while index < characters.count {
                 let character = characters[index]
                 let isTriple = index + 2 < characters.count
@@ -92,21 +92,61 @@ extension CrawlNativeConfigStore {
             if value.hasPrefix("'"), value.hasSuffix("'"), value.count >= 2 {
                 return String(value.dropFirst().dropLast())
             }
-            return Self.decodeBasicKey(value)
+            return Self.decodeTomlBasicString(value)
         }
     }
 
-    private static func decodeBasicKey(_ value: String) -> String {
-        guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else { return value }
-        let characters = Array(value.dropFirst().dropLast())
-        let escapes: [Character: String] = [
+    static func persistedConfigValue(_ raw: String?, kind: CrawlAppManifest.ConfigOptionKind) -> String? {
+        guard let raw else { return nil }
+        if kind == .string {
+            return raw.isEmpty ? nil : raw
+        }
+        return raw.nilIfBlank
+    }
+
+    static func encodeTomlBasicString(_ value: String) -> String {
+        var encoded = ""
+        for scalar in value.unicodeScalars {
+            switch scalar {
+            case "\\":
+                encoded += "\\\\"
+            case "\"":
+                encoded += "\\\""
+            case "\u{8}":
+                encoded += "\\b"
+            case "\t":
+                encoded += "\\t"
+            case "\n":
+                encoded += "\\n"
+            case "\u{c}":
+                encoded += "\\f"
+            case "\r":
+                encoded += "\\r"
+            default:
+                if scalar.value < 0x20 || scalar.value == 0x7F {
+                    let hex = String(scalar.value, radix: 16)
+                    encoded += "\\u" + String(repeating: "0", count: 4 - hex.count) + hex
+                } else {
+                    encoded.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return encoded
+    }
+
+    static func decodeTomlBasicString(_ value: String) -> String {
+        let scalars = value.unicodeScalars
+        guard scalars.first == "\"", scalars.last == "\"", scalars.count >= 2 else { return value }
+        // Escape tokens are scalars: a combining mark may share a Character with a hex digit.
+        let characters = Array(scalars.dropFirst().dropLast())
+        let escapes: [Unicode.Scalar: String] = [
             "b": "\u{8}", "t": "\t", "n": "\n", "f": "\u{c}", "r": "\r", "\"": "\"", "\\": "\\",
         ]
         var decoded = ""
         var index = 0
         while index < characters.count {
             guard characters[index] == "\\" else {
-                decoded.append(characters[index])
+                decoded.unicodeScalars.append(characters[index])
                 index += 1
                 continue
             }
@@ -119,7 +159,7 @@ extension CrawlNativeConfigStore {
             } else if escape == "u" || escape == "U" {
                 let length = escape == "u" ? 4 : 8
                 guard index + length <= characters.count,
-                      let code = UInt32(String(characters[index..<(index + length)]), radix: 16),
+                      let code = UInt32(String(String.UnicodeScalarView(characters[index..<(index + length)])), radix: 16),
                       let scalar = UnicodeScalar(code)
                 else { return value }
                 decoded.unicodeScalars.append(scalar)

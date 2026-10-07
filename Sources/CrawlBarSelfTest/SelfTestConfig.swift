@@ -284,6 +284,155 @@ extension CrawlBarSelfTest {
         try Self.expect(!explicitlyClearedContent.contains("api_key ="), "native TOML secret keys clear when explicit")
     }
 
+    static func testNativeTomlLiteralsAndInlineComments() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crawlbar-native-toml-literal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let configURL = directory.appendingPathComponent("config.toml")
+        try Data(#"""
+        [granola]
+        profile_path = '/tmp/granola-profile'
+        preferred_source = 'private-api'
+        allow_desktop_cache = true # keep enabled
+
+        [note]
+        quoted = "say \"hi\"" # trailing
+        hashed = 'keep # this'
+        label = "a\nb"
+        accent = "\u0065́"
+        leading_accent = "́[keep#"
+        literal_accent = '́[keep#'
+
+        [sync]
+        default_limit = 25 # keep the numeric value
+        """#.utf8).write(to: configURL)
+
+        let manifest = CrawlAppManifest(
+            id: CrawlAppID(rawValue: "literalcrawl"),
+            displayName: "Literal Crawl",
+            description: "A go-toml literal test crawler",
+            binary: .init(name: "literalcrawl"),
+            branding: .init(symbolName: "terminal", accentColor: "#123456"),
+            paths: .init(defaultConfig: configURL.path),
+            commands: [:],
+            capabilities: [],
+            configOptions: [
+                .init(id: "profile_path", label: "Profile", kind: .string, configKey: "granola.profile_path"),
+                .init(id: "preferred_source", label: "Source", kind: .choice, configKey: "granola.preferred_source"),
+                .init(id: "allow_desktop_cache", label: "Desktop cache", kind: .boolean, configKey: "granola.allow_desktop_cache"),
+                .init(id: "quoted", label: "Quoted", kind: .string, configKey: "note.quoted"),
+                .init(id: "hashed", label: "Hashed", kind: .string, configKey: "note.hashed"),
+                .init(id: "label", label: "Label", kind: .string, configKey: "note.label"),
+                .init(id: "accent", label: "Accent", kind: .string, configKey: "note.accent"),
+                .init(id: "leading_accent", label: "Leading accent", kind: .string, configKey: "note.leading_accent"),
+                .init(id: "literal_accent", label: "Literal accent", kind: .string, configKey: "note.literal_accent"),
+                .init(id: "sync_limit", label: "Sync limit", kind: .number, configKey: "sync.default_limit"),
+            ])
+        var appConfig = CrawlBarAppConfig(id: manifest.id)
+        let nativeStore = CrawlNativeConfigStore()
+        let loaded = nativeStore.resolvedConfigValues(appConfig: appConfig, manifest: manifest)
+        try Self.expect(loaded["profile_path"] == "/tmp/granola-profile", "literal TOML strings drop single quotes")
+        try Self.expect(loaded["preferred_source"] == "private-api", "literal TOML choices drop single quotes")
+        try Self.expect(loaded["allow_desktop_cache"] == "true", "inline TOML comments stay off boolean values")
+        try Self.expect(loaded["quoted"] == "say \"hi\"", "basic TOML strings unescape and drop inline comments")
+        try Self.expect(loaded["hashed"] == "keep # this", "hashes inside literal TOML strings stay in the value")
+        try Self.expect(loaded["label"] == "a\nb", "escaped TOML newlines decode to a newline")
+        try Self.expect(loaded["accent"] == "e\u{301}", "combining marks after Unicode escapes stay in the value")
+        try Self.expect(loaded["leading_accent"] == "\u{301}[keep#", "combining marks after basic-string delimiters stay in the value")
+        try Self.expect(loaded["literal_accent"] == "\u{301}[keep#", "combining marks after literal-string delimiters stay in the value")
+        try Self.expect(loaded["sync_limit"] == "25", "inline comments stay off numeric TOML values")
+
+        appConfig.configValues = loaded
+        appConfig.configValues["sync_limit"] = "30"
+        try nativeStore.write(appConfig: appConfig, manifest: manifest)
+        let content = try String(contentsOf: configURL, encoding: .utf8)
+        try Self.expect(!content.contains("'private-api'"), "rewritten TOML does not wrap literal quotes")
+        try Self.expect(!content.contains("allow_desktop_cache = false"), "rewritten TOML does not flip a commented true")
+        try Self.expect(content.contains("allow_desktop_cache = true"), "rewritten TOML keeps a commented boolean")
+        try Self.expect(content.contains("default_limit = 30"), "rewritten TOML keeps the edited number")
+        try Self.expect(content.contains("label = \"a\\nb\""), "rewritten TOML keeps an escaped newline on one line")
+        try Self.expect(!content.contains("label = \"a\nb\""), "rewritten TOML does not place a raw newline inside the label quotes")
+
+        let reread = nativeStore.resolvedConfigValues(
+            appConfig: CrawlBarAppConfig(id: manifest.id),
+            manifest: manifest)
+        try Self.expect(reread["preferred_source"] == "private-api", "rewritten literal TOML reads back without quotes")
+        try Self.expect(reread["allow_desktop_cache"] == "true", "rewritten commented boolean reads back as true")
+        try Self.expect(reread["quoted"] == "say \"hi\"", "rewritten basic TOML string reads back unescaped")
+        try Self.expect(reread["hashed"] == "keep # this", "rewritten literal hash reads back intact")
+        try Self.expect(reread["label"] == "a\nb", "rewritten escaped newline reads back as a newline")
+        try Self.expect(reread["accent"] == "e\u{301}", "Unicode escapes followed by combining marks round-trip")
+        try Self.expect(reread["leading_accent"] == "\u{301}[keep#", "leading combining marks round-trip in basic strings")
+        try Self.expect(reread["literal_accent"] == "\u{301}[keep#", "leading combining marks round-trip in literal strings")
+        try Self.expect(reread["sync_limit"] == "30", "rewritten numeric TOML reads back")
+    }
+
+    static func testNativeTomlWhitespaceAndDeleteRoundTrip() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crawlbar-native-toml-whitespace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configURL = directory.appendingPathComponent("config.toml")
+        try Data(#"""
+        [note]
+        blank = "\n"
+        padded = "\nkeep\n"
+        deleted = "\u007F"
+        other = "keep"
+        """#.utf8).write(to: configURL)
+
+        let manifest = CrawlAppManifest(
+            id: CrawlAppID(rawValue: "whitespacecrawl"),
+            displayName: "Whitespace Crawl",
+            description: "A whitespace round-trip crawler",
+            binary: .init(name: "whitespacecrawl"),
+            branding: .init(symbolName: "terminal", accentColor: "#123456"),
+            paths: .init(defaultConfig: configURL.path),
+            commands: [:],
+            capabilities: [],
+            configOptions: [
+                .init(id: "blank", label: "Blank", kind: .string, configKey: "note.blank"),
+                .init(id: "padded", label: "Padded", kind: .string, configKey: "note.padded"),
+                .init(id: "deleted", label: "Deleted", kind: .string, configKey: "note.deleted"),
+                .init(id: "other", label: "Other", kind: .string, configKey: "note.other"),
+            ])
+        let nativeStore = CrawlNativeConfigStore()
+        var appConfig = CrawlBarAppConfig(id: manifest.id)
+        let loaded = nativeStore.resolvedConfigValues(appConfig: appConfig, manifest: manifest)
+        try Self.expect(loaded["blank"] == "\n", "a newline-only TOML string stays a newline")
+        try Self.expect(loaded["padded"] == "\nkeep\n", "surrounding newlines stay in the decoded string")
+        try Self.expect(loaded["deleted"] == "\u{7F}", "a TOML unicode delete decodes to U+007F")
+        appConfig.configValues = loaded
+        appConfig.configValues["other"] = "changed"
+        try nativeStore.write(appConfig: appConfig, manifest: manifest)
+        let content = try String(contentsOf: configURL, encoding: .utf8)
+        try Self.expect(content.contains("blank = \"\\n\""), "a newline-only value stays in the saved file")
+        try Self.expect(content.contains("padded = \"\\nkeep\\n\""), "surrounding newlines stay escaped")
+        try Self.expect(content.contains("deleted = \"\\u007f\""), "U+007F is written as a unicode escape")
+        try Self.expect(content.contains("other = \"changed\""), "the unrelated edit is saved")
+        let reread = nativeStore.resolvedConfigValues(appConfig: CrawlBarAppConfig(id: manifest.id), manifest: manifest)
+        try Self.expect(reread["blank"] == "\n", "the saved newline-only value reads back")
+        try Self.expect(reread["padded"] == "\nkeep\n", "the saved padded value reads back")
+        try Self.expect(reread["deleted"] == "\u{7F}", "the saved delete character reads back")
+
+        try FileManager.default.removeItem(at: configURL)
+        var fresh = CrawlBarAppConfig(id: manifest.id)
+        fresh.configValues = [
+            "blank": "\n",
+            "padded": "\nkeep\n",
+            "deleted": "\u{7F}",
+            "other": "fresh",
+        ]
+        try nativeStore.write(appConfig: fresh, manifest: manifest)
+        let created = try String(contentsOf: configURL, encoding: .utf8)
+        try Self.expect(created.contains("blank = \"\\n\""), "a fresh file keeps a newline-only string")
+        try Self.expect(created.contains("padded = \"\\nkeep\\n\""), "a fresh file keeps surrounding newlines")
+        try Self.expect(created.contains("deleted = \"\\u007f\""), "a fresh file escapes U+007F")
+        try Self.expect(created.contains("other = \"fresh\""), "a fresh file writes the other key")
+    }
+
     static func testStatusSecretsLoadFromNativeConfig() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("crawlbar-status-secret-\(UUID().uuidString)", isDirectory: true)

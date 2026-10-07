@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve native TOML literal strings, inline-commented scalars, whitespace, and escaped control characters when saving crawler settings. Thanks @SebTardif.
+- Keep the newest 200 action logs when saving or listing history, preserving non-log files, directories, and symlinks. Thanks @SebTardif.
+
 ## 0.6.0 - 2026-09-22
 
 **Highlights:** Smaller downloads for Apple Silicon and Intel Macs, plus safer crawler timestamps and native configuration edits.
